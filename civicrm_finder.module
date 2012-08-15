@@ -1,0 +1,225 @@
+<?php
+
+function civicrm_finder_menu() {
+  return array(
+    'civicrm/finder/%/%' => array(
+      'title' => 'Finder results',
+      'type' => MENU_CALLBACK,
+      'page callback' => '_civicrm_finder_results',
+      'page arguments' => array(2, 3),
+      'access arguments' => array('view all contacts'),
+    ),
+  );
+}
+
+function civicrm_finder_block_info() {
+  return array(
+    'finder' => array(
+      'info' => t('CiviCRM Finder'),
+      'cache' => DRUPAL_CACHE_GLOBAL,
+    ),
+  );
+}
+
+function civicrm_finder_block_view($delta = '') {
+  $block = array();
+  if ($delta == 'finder') {
+    $block['subject'] = t('CiviCRM Finder');
+    $block['content'] = drupal_get_form('civicrm_finder_form');
+  }
+  return $block;
+}
+
+function civicrm_finder_form($form, &$form_state) {
+  $form['select'] = array(
+    '#type' => 'select',
+    '#title' => t('Search by'),
+    '#options' => array(
+      'contact_id' => t('Contact ID'),
+      'external_id' => t('External ID'),
+      'phone' => t('Phone'),
+      'username' => t('Drupal username'),
+      'drupal_id' => t('Drupal ID'),
+    ),
+    '#default_value' => 0,
+  );
+  $form['search'] = array(
+    '#type' => 'textfield',
+    '#size' => 20,
+  );
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('Search'),
+  );
+  return $form;
+}
+
+function civicrm_finder_form_submit($form, &$form_state) {
+  drupal_goto("civicrm/finder/{$form_state['values']['select']}/{$form_state['values']['search']}");
+}
+
+function _civicrm_finder_results($type, $value) {
+  if (!civicrm_initialize()) {
+    return;
+  }
+
+  switch ($type) {
+    case 'phone':
+      $contact_ids = _civicrm_finder_search_phone($value);
+      break;
+    case 'username':
+      $contact_ids = _civicrm_finder_search_username($value);
+      break;
+    case 'contact_id':
+      $contact_ids = _civicrm_finder_search_contact_id($value);
+      break;
+    case 'external_id':
+      $contact_ids = _civicrm_finder_search_external_id($value);
+      break;
+    case 'drupal_id':
+      $contact_ids = _civicrm_finder_search_drupal_id($value);
+      break;
+  }
+
+
+  if ($contact_ids === FALSE) {
+    drupal_set_message("An error occurred searching via CiviCRM's api.", 'error');
+    return '';
+  }
+  $contacts = _civicrm_finder_load_contacts(array_unique($contact_ids));
+
+  // Format table for diplay
+  $header = array(t('Contact ID'), t('Display name'), t('Drupal username'), t('Phone'), t('External ID'),);
+  $rows = array();
+  foreach ($contacts as $contact) {
+    // Create civicrm contact link
+    $civicrm_link = l($contact['display_name'], 'civicrm/contact/view', array('query' => array('reset' => 1, 'cid' => $contact['contact_id'])));
+
+    // Create drupal username link
+    if (!$contact['api.uf_match.getSingle']['is_error']) {
+      $account = user_load($contact['api.uf_match.getSingle']['uf_id']);
+      $drupal_link = theme('username', array('account' => $account));
+    }
+    else {
+      $drupal_link = '';
+    }
+
+    $rows[] = array(
+      $contact['contact_id'],
+      $civicrm_link,
+      $drupal_link,
+      $contact['phone'],
+      $contact['external_identifier'],
+    );
+  }
+  
+  if (empty($contacts)) {
+    return "No results returned.";
+  }
+  else {
+    return theme('table', array('header' => $header, 'rows' => $rows));
+  }
+}
+
+function _civicrm_finder_load_contacts($contact_ids) {
+  $contacts = array();
+  foreach ($contact_ids as $contact_id) {
+    $results = civicrm_api('Contact', 'getSingle', array(
+      'id' => $contact_id,
+      'api.uf_match.getSingle' => array(
+        'sequential' => 1,
+        'domain_id' => _civicrm_finder_current_domain(),
+      ),
+      'version' => 3,
+    ));
+    if (!$results['is_error']) {
+      $contacts[] = $results;
+    }
+  }
+  return $contacts;
+}
+
+function _civicrm_finder_current_domain() {
+  $domain = &drupal_static(_FUNCTION_);
+  if (!isset($domain)) {
+    $results =  civicrm_api('Domain', 'getSingle', array(
+      'current_domain' => 1,
+      'version' => 3,
+    ));
+    $domain = $results['id'];
+  }
+  return $domain;
+}
+
+function _civicrm_finder_search_phone($phone) {
+  $results = civicrm_api('Phone', 'get', array(
+    'phone' => array('LIKE' => "%{$phone}%"),
+    'version' => 3,
+    'options' => array('limit' => 100),
+  ));
+
+  if ($results['is_error']) {
+    return FALSE;
+  }
+  else {
+    $contact_ids = array();
+    foreach ($results['values'] as $result) {
+      $contact_ids[] = $result['contact_id'];
+    }
+    return $contact_ids;
+  }
+}
+
+function _civicrm_finder_search_username($username) {
+  $uids =  db_query("SELECT uid FROM {users} WHERE name LIKE '%{$username}%'")->fetchCol();
+
+  $contact_ids = array();
+  foreach ($uids as $uid) {
+    $results = civicrm_api('uf_match', 'getSingle', array(
+      'uf_id' => $uid,
+      'domain_id' => _civicrm_finder_current_domain(),
+      'version' => 3,
+    ));
+    if (!$results['is_error']) {
+      $contact_ids[] = $results['contact_id'];
+    }
+  }
+  return $contact_ids;
+}
+
+function _civicrm_finder_search_contact_id($contact_id) {
+  return array($contact_id);
+}
+
+function _civicrm_finder_search_external_id($external_id) {
+  $results = civicrm_api('Contact', 'get', array(
+    'external_identifier' => $external_id,
+    'version' => 3,
+  ));
+  if ($results['is_error']) {
+    return FALSE;
+  }
+
+  $contact_ids = array();
+  foreach ($results['values'] as $contact) {
+    $contact_ids[] = $contact['id'];
+  }
+  return $contact_ids;
+}
+
+function _civicrm_finder_search_drupal_id($drupal_id) {
+  $results = civicrm_api('uf_match', 'get', array(
+    'uf_id' => $drupal_id,
+    'domain_id' => _civicrm_finder_current_domain(),
+    'version' => 3,
+    'sequential' => 1,
+  ));
+  if ($results['is_error']) {
+    return FALSE;
+  }
+
+  if ($results['count']) {
+    return array($results['values'][0]['contact_id']);
+  }
+  else return array();
+}

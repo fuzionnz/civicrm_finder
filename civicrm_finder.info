@@ -1,0 +1,4 @@
+name = CiviCRM Finder Block
+description = Provides a search block that allows searching of CiviCRM contacts by phone, email and name.
+core = 7.x
+dependencies[] = civicrm
