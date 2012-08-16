@@ -79,6 +79,8 @@ function _civicrm_finder_results($type, $value) {
     case 'drupal_id':
       $contact_ids = _civicrm_finder_search_drupal_id($value);
       break;
+    default:
+      $contact_ids === FALSE;
   }
 
 
@@ -96,7 +98,7 @@ function _civicrm_finder_results($type, $value) {
     $civicrm_link = l($contact['display_name'], 'civicrm/contact/view', array('query' => array('reset' => 1, 'cid' => $contact['contact_id'])));
 
     // Create drupal username link
-    if (!$contact['api.uf_match.getSingle']['is_error']) {
+    if (empty($contact['api.uf_match.getSingle']['is_error'])) {
       $account = user_load($contact['api.uf_match.getSingle']['uf_id']);
       $drupal_link = theme('username', array('account' => $account));
     }
@@ -108,8 +110,8 @@ function _civicrm_finder_results($type, $value) {
       $contact['contact_id'],
       $civicrm_link,
       $drupal_link,
-      $contact['phone'],
-      $contact['external_identifier'],
+      &$contact['phone'], // These fields may or may not exist; we don't care about errors.
+      &$contact['external_identifier'], // These fields may or may not exist; we don't care about errors.
     );
   }
   
@@ -127,12 +129,11 @@ function _civicrm_finder_load_contacts($contact_ids) {
     $results = civicrm_api('Contact', 'getSingle', array(
       'id' => $contact_id,
       'api.uf_match.getSingle' => array(
-        'sequential' => 1,
         'domain_id' => _civicrm_finder_current_domain(),
       ),
       'version' => 3,
     ));
-    if (!$results['is_error']) {
+    if (empty($results['is_error'])) {
       $contacts[] = $results;
     }
   }
@@ -140,7 +141,7 @@ function _civicrm_finder_load_contacts($contact_ids) {
 }
 
 function _civicrm_finder_current_domain() {
-  $domain = &drupal_static(_FUNCTION_);
+  $domain = &drupal_static(__FUNCTION__);
   if (!isset($domain)) {
     $results =  civicrm_api('Domain', 'getSingle', array(
       'current_domain' => 1,
